@@ -1298,20 +1298,6 @@ function DisplayCustomModeOptions {
     PrintHeader 'Custom Mode'
 }
 
-function Install-LibreOffice {
-    Write-Host "`nInstalling LibreOffice via winget..." -ForegroundColor Cyan
-    try {
-        winget install --id TheDocumentFoundation.LibreOffice -e --accept-package-agreements --accept-source-agreements
-        Write-Host "`nLibreOffice installation complete." -ForegroundColor Green
-    }
-    catch {
-        Write-Host "`nFailed to install LibreOffice: $_" -ForegroundColor Red
-    }
-    Pause
-}
-
-
-
 
 ##################################################################################################################
 #                                                                                                                #
@@ -1440,10 +1426,9 @@ if ((-not $script:Params.Count) -or $RunDefaults -or $RunWin11Defaults -or $RunS
 
             PrintHeader 'Menu'
 
-            Write-Output "(1) Default mode: Quickly apply the recommended changes"
+            Write-Output "(1) Default mode: Quickly apply the recommended changes I MADE A CHANGE"
             Write-Output "(2) Custom mode: Manually select what changes to make"
             Write-Output "(3) App removal mode: Select & remove apps, without making other changes"
-            Write-Host   "(L) Install LibreOffice"
 
             # Only show this option if SavedSettings file exists
             if (Test-Path "$PSScriptRoot/SavedSettings") {
@@ -1535,10 +1520,6 @@ if ((-not $script:Params.Count) -or $RunDefaults -or $RunWin11Defaults -or $RunS
                 Write-Host "Selection was cancelled, no apps have been removed" -ForegroundColor Red
                 Write-Output ""
             }
-        }
-
-        'L' {
-            Install-LibreOffice
         }
 
         # Load custom options from the "SavedSettings" file
@@ -1888,10 +1869,6 @@ switch ($script:Params.Keys) {
 }
 
 RestartExplorer
-
-# --- Extra: Install LibreOffice automatically ---
-Write-Output "Installing LibreOffice..."
-winget install --id TheDocumentFoundation.LibreOffice -e --accept-package-agreements --accept-source-agreements
 
 
 Write-Output ""
