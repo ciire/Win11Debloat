@@ -891,6 +891,7 @@ function DisplayCustomModeOptions {
         Write-Host " (1) Only remove the default selection of bloatware apps from 'Appslist.txt'" -ForegroundColor Yellow
         Write-Host " (2) Remove default selection of bloatware apps, as well as mail & calendar apps, developer apps and gaming apps"  -ForegroundColor Yellow
         Write-Host " (3) Manually select which apps to remove" -ForegroundColor Yellow
+
         $RemoveAppsInput = Read-Host "Do you want to remove any apps? Apps will be removed for all users (n/1/2/3)"
 
         # Show app selection form if user entered option 3
@@ -1297,6 +1298,19 @@ function DisplayCustomModeOptions {
     PrintHeader 'Custom Mode'
 }
 
+function Install-LibreOffice {
+    Write-Host "`nInstalling LibreOffice via winget..." -ForegroundColor Cyan
+    try {
+        winget install --id TheDocumentFoundation.LibreOffice -e --accept-package-agreements --accept-source-agreements
+        Write-Host "`nLibreOffice installation complete." -ForegroundColor Green
+    }
+    catch {
+        Write-Host "`nFailed to install LibreOffice: $_" -ForegroundColor Red
+    }
+    Pause
+}
+
+
 
 
 ##################################################################################################################
@@ -1429,6 +1443,7 @@ if ((-not $script:Params.Count) -or $RunDefaults -or $RunWin11Defaults -or $RunS
             Write-Output "(1) Default mode: Quickly apply the recommended changes"
             Write-Output "(2) Custom mode: Manually select what changes to make"
             Write-Output "(3) App removal mode: Select & remove apps, without making other changes"
+            Write-Host   "(L) Install LibreOffice"
 
             # Only show this option if SavedSettings file exists
             if (Test-Path "$PSScriptRoot/SavedSettings") {
@@ -1520,6 +1535,10 @@ if ((-not $script:Params.Count) -or $RunDefaults -or $RunWin11Defaults -or $RunS
                 Write-Host "Selection was cancelled, no apps have been removed" -ForegroundColor Red
                 Write-Output ""
             }
+        }
+
+        'L' {
+            Install-LibreOffice
         }
 
         # Load custom options from the "SavedSettings" file
@@ -1869,6 +1888,11 @@ switch ($script:Params.Keys) {
 }
 
 RestartExplorer
+
+# --- Extra: Install LibreOffice automatically ---
+Write-Output "Installing LibreOffice..."
+winget install --id TheDocumentFoundation.LibreOffice -e --accept-package-agreements --accept-source-agreements
+
 
 Write-Output ""
 Write-Output ""
