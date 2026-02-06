@@ -51,17 +51,23 @@ function Get-UnifiedAppList {
     return ($regApps + $appxApps) | Sort-Object DisplayName
 }
 
-# NEW GUI FUNCTION
 function Show-Checklist {
     param($AppList)
 
     [xml]$xaml = @"
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="App Uninstaller" Height="550" Width="400" Background="#121212" WindowStartupLocation="CenterScreen">
+        Title="App Uninstaller" Height="600" Width="400" Background="#121212" WindowStartupLocation="CenterScreen">
     <Grid Margin="15">
-        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
         <TextBlock Text="Select Bloatware" Foreground="#00fbff" FontSize="18" Margin="0,0,0,10" FontWeight="Bold"/>
+        
         <ListBox x:Name="AppList" Grid.Row="1" Background="#1e1e1e" Foreground="White" BorderThickness="0">
             <ListBox.ItemTemplate>
                 <DataTemplate>
@@ -72,7 +78,12 @@ function Show-Checklist {
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
-        <Button x:Name="BtnStart" Grid.Row="2" Content="UNINSTALL SELECTED" Height="35" Margin="0,15,0,0" Background="#ff3333" Foreground="White" FontWeight="Bold"/>
+
+        <CheckBox x:Name="SaveToggle" Grid.Row="2" Content="Save this selection to apps_to_remove.txt" 
+                  Foreground="Gray" Margin="0,15,0,0" IsChecked="True" VerticalAlignment="Center"/>
+        
+        <Button x:Name="BtnStart" Grid.Row="3" Content="UNINSTALL SELECTED" Height="35" Margin="0,10,0,0" 
+                Background="#ff3333" Foreground="White" FontWeight="Bold"/>
     </Grid>
 </Window>
 "@
@@ -82,9 +93,15 @@ function Show-Checklist {
     $wrappedList = foreach($app in $AppList) { [PSCustomObject]@{ DisplayName = $app.DisplayName; IsChecked = $false; Original = $app } }
     ($window.FindName("AppList")).ItemsSource = $wrappedList
     
+    $saveToggle = $window.FindName("SaveToggle")
     ($window.FindName("BtnStart")).Add_Click({ $window.DialogResult = $true; $window.Close() })
     
-    if ($window.ShowDialog()) { return $wrappedList | Where-Object { $_.IsChecked } | Select-Object -ExpandProperty Original }
+    if ($window.ShowDialog()) { 
+        return [PSCustomObject]@{
+            AppsToUninst = $wrappedList | Where-Object { $_.IsChecked } | Select-Object -ExpandProperty Original
+            SaveRequested = $saveToggle.IsChecked
+        }
+    }
 }
 function Invoke-SimulatedManualRemoval {
     param ([Parameter(Mandatory=$true)] $App)
@@ -122,12 +139,35 @@ function Invoke-SimulatedManualRemoval {
 
 Test-Admin
 
-$allApps = Get-UnifiedAppList
-# Swapped Out-GridView for our new Show-Checklist
-$selectedApps = Show-Checklist -AppList $allApps
+$configPath = Join-Path $PSScriptRoot "apps_to_remove.txt"
+$selectedApps = @()
 
+# 1. CHECK FOR CONFIG FILE
+if (Test-Path $configPath) {
+    Write-Host "[CONFIG] Found apps_to_remove.txt. Skipping selection..." -ForegroundColor Green
+    $savedNames = Get-Content $configPath
+    $allApps = Get-UnifiedAppList
+    $selectedApps = $allApps | Where-Object { $savedNames -contains $_.DisplayName }
+} 
+else {
+    # 2. SELECTION GUI
+    $allApps = Get-UnifiedAppList
+    $guiResult = Show-Checklist -AppList $allApps
+
+    if ($guiResult.AppsToUninst) {
+        $selectedApps = $guiResult.AppsToUninst
+        
+        # 3. OPTIONAL SAVE LOGIC
+        if ($guiResult.SaveRequested) {
+            $selectedApps.DisplayName | Out-File $configPath -Force
+            Write-Host "[CONFIG] Selection saved to $configPath" -ForegroundColor Gray
+        }
+    }
+}
+
+# 4. RUN THE UNINSTALLER
 if (-not $selectedApps) {
-    Write-Host "No apps selected. Exiting." -ForegroundColor Yellow
+    Write-Host "No apps to uninstall. Exiting." -ForegroundColor Yellow
 } else {
     foreach ($item in $selectedApps) {
         Invoke-SimulatedManualRemoval -App $item
