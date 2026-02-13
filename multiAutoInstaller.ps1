@@ -12,21 +12,41 @@ $libreInstaller = "LibreOffice_25.8.4_Win_x86-64.msi"
 
 # 3. Enhanced Installation Functions
 function Install-Adobe {
+    $logFile = Join-Path $PSScriptRoot "Adobe_Install_Detail.log"
     $path = Join-Path $PSScriptRoot -ChildPath $subFolder | Join-Path -ChildPath $adobeInstaller
-    if (-not (Test-Path $path)) { Write-Host "Error: Adobe not found." -ForegroundColor Red; return }
 
-    Write-Host "Installing Adobe Acrobat (Background Mode)..." -ForegroundColor Cyan
-    
-    # Industry Practice: Capture the specific process object to avoid waiting on system-wide msiexec
-    $adobeProc = Start-Process -FilePath $path -ArgumentList "/sAll /rs /msi /qn" -PassThru
+    if (-not (Test-Path $path)) { 
+        Write-Host "Error: Adobe installer not found at $path" -ForegroundColor Red
+        return 
+    }
 
-    # Optimization: Instead of an infinite loop, we wait for the SPECIFIC process with a timeout
-    Write-Host "Monitoring specific Adobe process (ID: $($adobeProc.Id))..." -ForegroundColor Gray
+    Write-Host "Installing Adobe Acrobat (Logging to: $logFile)..." -ForegroundColor Cyan
     
-    # We give Adobe 5 minutes max. If it's "churning" files, we let it, but we don't wait for 'eternity'.
-    $adobeProc | Wait-Process -Timeout 300 -ErrorAction SilentlyContinue
-    
-    Write-Host "Adobe hand-off complete." -ForegroundColor Green
+    # We add the logging switch directly to the argument list
+    $adobeArgs = "/sAll /rs /msi /qn /norestart /L*V `"$logFile`""
+
+    try {
+        $adobeProc = Start-Process -FilePath $path -ArgumentList $adobeArgs -PassThru -ErrorAction Stop
+        
+        Write-Host "Monitoring Adobe process (ID: $($adobeProc.Id))..." -ForegroundColor Gray
+        
+        # Wait up to 5 mins
+        $adobeProc | Wait-Process -Timeout 300 -ErrorAction SilentlyContinue
+
+        if ($adobeProc.HasExited) {
+            $exitCode = $adobeProc.ExitCode
+            if ($exitCode -eq 0 -or $exitCode -eq 3010) {
+                Write-Host "Success! Exit Code: $exitCode" -ForegroundColor Green
+            } else {
+                Write-Host "Installation Failed. Exit Code: $exitCode. Check the log file!" -ForegroundColor Red
+            }
+        } else {
+            Write-Host "Error: Installation timed out after 5 minutes. Process is still running in background." -ForegroundColor Yellow
+        }
+    }
+    catch {
+        Write-Host "Failed to launch the installer: $($_.Exception.Message)" -ForegroundColor Red
+    }
 }
 
 function Install-LibreOffice {
