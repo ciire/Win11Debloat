@@ -1,25 +1,30 @@
-# =========================================================
-# UNIFIED SOFTWARE MANAGER
-# Combines bloatware removal and software installation
-# =========================================================
+# ============================================================================
+# SOFTWARE MANAGEMENT TOOL
+# Unified bloatware removal and software installation utility
+# ============================================================================
 
-# ---------------------------------------------------------
+# ============================================================================
 # DEPENDENCIES
-# ---------------------------------------------------------
+# ============================================================================
+
 Add-Type -AssemblyName PresentationFramework
 Add-Type -AssemblyName PresentationCore
 Add-Type -AssemblyName WindowsBase
 
-# ---------------------------------------------------------
+# ============================================================================
 # WORKFLOW STATE MANAGEMENT
-# ---------------------------------------------------------
+# Manages multi-step workflows that span system restarts
+# ============================================================================
 
 function Get-WorkflowState {
+    <#
+    .SYNOPSIS
+    Retrieves the current workflow state from temp storage
+    #>
     $statePath = Join-Path $env:TEMP "software_manager_workflow.json"
     if (Test-Path $statePath) {
         try {
-            $json = Get-Content $statePath -Raw | ConvertFrom-Json
-            return $json
+            return Get-Content $statePath -Raw | ConvertFrom-Json
         } catch {
             return $null
         }
@@ -28,6 +33,10 @@ function Get-WorkflowState {
 }
 
 function Set-WorkflowState {
+    <#
+    .SYNOPSIS
+    Saves workflow state for post-restart continuation
+    #>
     param(
         [string]$Stage,
         [string]$InstallChoice
@@ -45,6 +54,10 @@ function Set-WorkflowState {
 }
 
 function Clear-WorkflowState {
+    <#
+    .SYNOPSIS
+    Removes workflow state file after completion
+    #>
     $statePath = Join-Path $env:TEMP "software_manager_workflow.json"
     if (Test-Path $statePath) {
         Remove-Item $statePath -Force
@@ -53,26 +66,35 @@ function Clear-WorkflowState {
 }
 
 function Set-WorkflowAutoRun {
+    <#
+    .SYNOPSIS
+    Configures script to auto-run after restart via RunOnce registry key
+    #>
     $scriptPath = $PSCommandPath
     $scriptDir = Split-Path -Parent $scriptPath
     $registryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
     $name = "SoftwareManagerWorkflow"
     
-    # This command tells PowerShell: "Go to the script folder, THEN run the script"
+    # Ensure working directory is correct when script auto-runs
     $command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -Command `"Set-Location '$scriptDir'; & '$scriptPath'`""
     
     try {
         Set-ItemProperty -Path $registryPath -Name $name -Value $command -ErrorAction Stop
-        Write-Host "[WORKFLOW] Auto-run configured with correct directory." -ForegroundColor Green
+        Write-Host "[WORKFLOW] Auto-run configured successfully." -ForegroundColor Green
     } catch {
-        Write-Host "[ERROR] Failed to set workflow auto-run." -ForegroundColor Red
+        Write-Host "[ERROR] Failed to configure auto-run." -ForegroundColor Red
     }
 }
 
-# ---------------------------------------------------------
-# ADMIN ELEVATION
-# ---------------------------------------------------------
+# ============================================================================
+# PRIVILEGE ELEVATION
+# ============================================================================
+
 function Test-Admin {
+    <#
+    .SYNOPSIS
+    Checks for admin privileges and elevates if needed
+    #>
     $currentPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
     if (-NOT $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
         Write-Host "Elevating privileges..." -ForegroundColor Yellow
@@ -81,13 +103,20 @@ function Test-Admin {
     }
 }
 
-# ---------------------------------------------------------
-# UNINSTALL FUNCTIONS
-# ---------------------------------------------------------
+# ============================================================================
+# APPLICATION DISCOVERY
+# ============================================================================
 
 function Get-UnifiedAppList {
+    <#
+    .SYNOPSIS
+    Scans for both Win32/64 and UWP applications
+    .DESCRIPTION
+    Combines registry-based apps and AppX packages into a unified list
+    #>
     Write-Host "Scanning installed applications..." -ForegroundColor Cyan
 
+    # Scan registry for Win32/64 applications
     $registryPaths = @(
         "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
         "HKLM:\SOFTWARE\Wow6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*",
@@ -95,12 +124,17 @@ function Get-UnifiedAppList {
     )
     
     [array]$regApps = Get-ItemProperty $registryPaths -ErrorAction SilentlyContinue | 
-        Where-Object { $_.DisplayName -and ($_.UninstallString -or $_.QuietUninstallString) -and ($_.SystemComponent -ne 1) } |
+        Where-Object { 
+            $_.DisplayName -and 
+            ($_.UninstallString -or $_.QuietUninstallString) -and 
+            ($_.SystemComponent -ne 1) 
+        } |
         Select-Object @{Name="DisplayName"; Expression={$_.DisplayName}}, 
                       @{Name="Id"; Expression={$_.PSChildName}}, 
                       @{Name="Type"; Expression={"Win32/64"}},
                       UninstallString
 
+    # Scan for UWP/AppX packages
     [array]$appxApps = Get-AppxPackage | 
         Where-Object { 
             $_.IsFramework -eq $false -and 
@@ -112,6 +146,7 @@ function Get-UnifiedAppList {
             $_.Status -eq "Ok"
         } |
         Select-Object @{Name="DisplayName"; Expression={
+                          # Humanize package names
                           $n = $_.Name -replace 'Microsoft\.', '' -replace 'Windows\.', ''
                           $n = [regex]::Replace($n, '([a-z])([A-Z])', '$1 $2')
                           $n.Replace('.', ' ')
@@ -120,6 +155,7 @@ function Get-UnifiedAppList {
                       @{Name="Type"; Expression={"UWP"}},
                       @{Name="UninstallString"; Expression={"Remove-AppxPackage"}}
 
+    # Combine and sort
     $combined = @()
     if ($regApps) { $combined += $regApps }
     if ($appxApps) { $combined += $appxApps }
@@ -127,7 +163,19 @@ function Get-UnifiedAppList {
     return $combined | Sort-Object DisplayName
 }
 
+# ============================================================================
+# UNINSTALL GUI
+# ============================================================================
+
 function Show-UninstallGUI {
+    <#
+    .SYNOPSIS
+    Displays interactive application selection interface
+    .PARAMETER AppList
+    Array of applications to display
+    .PARAMETER PreSelectedNames
+    Application names to pre-check (from template)
+    #>
     param(
         $AppList,
         $PreSelectedNames = @()
@@ -178,9 +226,11 @@ function Show-UninstallGUI {
     </Grid>
 </Window>
 "@
+
     $reader = (New-Object System.Xml.XmlNodeReader $xaml)
     $window = [Windows.Markup.XamlReader]::Load($reader)
 
+    # Wrap apps with IsChecked property for data binding
     $wrappedList = foreach($app in $AppList) { 
         [PSCustomObject]@{ DisplayName = $app.DisplayName; IsChecked = $false; Original = $app } 
     }
@@ -188,6 +238,7 @@ function Show-UninstallGUI {
     $listBox = $window.FindName("AppListBox")
     $listBox.ItemsSource = $wrappedList
     
+    # Configure template toggle
     $templateToggle = $window.FindName("UseTemplate")
     
     if ($PreSelectedNames.Count -eq 0) {
@@ -196,6 +247,7 @@ function Show-UninstallGUI {
         $templateToggle.Foreground = [System.Windows.Media.Brushes]::Gray
     }
 
+    # Template toggle event handler
     $templateToggle.Add_Click({
         foreach ($item in $wrappedList) {
             if ($templateToggle.IsChecked) {
@@ -219,8 +271,16 @@ function Show-UninstallGUI {
     }
 }
 
+# ============================================================================
+# WINDOWS WIDGETS REMOVAL
+# ============================================================================
+
 function Disable-WindowsWidgets {
-    Write-Host "`n[ACTION] Disabling Widgets for ALL USERS..." -ForegroundColor Cyan
+    <#
+    .SYNOPSIS
+    Disables Windows Widgets via group policy registry key
+    #>
+    Write-Host "`n[ACTION] Disabling Widgets for all users..." -ForegroundColor Cyan
     
     $registryPath = "HKLM:\SOFTWARE\Policies\Microsoft\Dsh"
     $name = "AllowNewsAndInterests"
@@ -228,13 +288,14 @@ function Disable-WindowsWidgets {
     try {
         if (-not (Test-Path $registryPath)) {
             New-Item -Path $registryPath -Force | Out-Null
-            Write-Host " [+] Created Policy directory." -ForegroundColor Gray
+            Write-Host " [+] Created policy directory." -ForegroundColor Gray
         }
 
         Set-ItemProperty -Path $registryPath -Name $name -Value 0 -ErrorAction Stop
         Write-Host " [+] Widgets disabled for all users." -ForegroundColor Green
 
-        Write-Host " [+] Refreshing Taskbar..." -ForegroundColor Gray
+        # Restart Explorer to apply changes
+        Write-Host " [+] Refreshing taskbar..." -ForegroundColor Gray
         Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
     } 
     catch {
@@ -242,45 +303,51 @@ function Disable-WindowsWidgets {
     }
 }
 
+# ============================================================================
+# APPLICATION REMOVAL
+# ============================================================================
+
 function Invoke-AppRemoval {
+    <#
+    .SYNOPSIS
+    Removes an application using appropriate uninstall method
+    .DESCRIPTION
+    Handles both UWP (AppX) and Win32/MSI applications with silent uninstall fallback
+    #>
     param ([Parameter(Mandatory=$true)] $App)
+    
     $name = $App.DisplayName
     Write-Host "`n[REMOVING] $name" -ForegroundColor Cyan
-    
-    # --- Service/Process Cleanup (Keep your existing Acer logic) ---
-    if ($name -match "Acer" -or $name -match "Quick Access") {
-        # ... (keep existing service stopping code)
-    }
 
     try {
         if ($App.Type -eq "UWP") {
-            # --- UWP PURGE (Keep existing logic) ---
+            # Remove UWP/AppX package for all users
             $pName = ($App.Id -split "_")[0]
             Get-AppxPackage -Name "*$pName*" -AllUsers | Remove-AppxPackage -AllUsers -ErrorAction SilentlyContinue
             Get-AppxProvisionedPackage -Online | Where-Object { $_.DisplayName -match $pName } | Remove-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue
             Write-Host " [SUCCESS] $name removed." -ForegroundColor Green
         } 
         else {
-            # --- WIN32/MSI LOGIC ---
+            # Handle Win32/MSI applications
             $uninstStr = $App.UninstallString.Trim()
             $exePath = ""
             $args = ""
 
-            # Detect MSI (MsiExec.exe /X{...})
+            # Parse uninstall string and determine silent arguments
             if ($uninstStr -imatch "msiexec") {
+                # MSI-based installer
                 $exePath = "msiexec.exe"
-                # Strip the path to msiexec if it exists and keep only the GUID/arguments
                 $args = ($uninstStr -ireplace ".*msiexec\.exe\s*", "" -ireplace "/I", "/X").Trim()
                 $silentArgs = "$args /qn /norestart"
             } 
-            # Detect Quoted EXE Path
             elseif ($uninstStr -match '^"(.*)"\s*(.*)$') {
+                # Quoted executable path
                 $exePath = $matches[1]
                 $args = $matches[2]
                 $silentArgs = "$args /S /silent /quiet /norestart".Trim()
             } 
-            # Detect Unquoted EXE Path
             else {
+                # Unquoted or complex path
                 if ($uninstStr -like "*.exe*") {
                     $split = $uninstStr -split ".exe", 2
                     $exePath = ($split[0] + ".exe").Replace('"','')
@@ -292,17 +359,18 @@ function Invoke-AppRemoval {
                 }
             }
 
+            # Attempt silent removal
             Write-Host " [>] Attempting silent removal..." -ForegroundColor Gray
             $proc = Start-Process -FilePath $exePath -ArgumentList $silentArgs -Verb RunAs -PassThru -Wait -ErrorAction SilentlyContinue
             
             Start-Sleep -Seconds 5 
 
-            # Verify existence
+            # Verify removal
             $stillExists = (Get-UnifiedAppList) | Where-Object { $_.Id -eq $App.Id }
 
             if ($stillExists) {
-                Write-Host " [!] Silent failed. Launching standard GUI..." -ForegroundColor White
-                # Launch with original args so user can see the window
+                # Fallback to GUI uninstaller
+                Write-Host " [!] Silent removal failed. Launching standard GUI..." -ForegroundColor White
                 Start-Process -FilePath $exePath -ArgumentList $args -Verb RunAs -Wait
             } else {
                 Write-Host " [SUCCESS] $name removed." -ForegroundColor Green
@@ -315,7 +383,15 @@ function Invoke-AppRemoval {
     }
 }
 
+# ============================================================================
+# AUTO-RUN CONFIGURATION
+# ============================================================================
+
 function Set-RunOnce {
+    <#
+    .SYNOPSIS
+    Schedules script to run once after next restart
+    #>
     $scriptPath = $PSCommandPath
     $tempPath = Join-Path $env:TEMP "software_manager_log.txt"
     Add-Content -Path $tempPath -Value "Script ran at $(Get-Date)"
@@ -328,31 +404,50 @@ function Set-RunOnce {
         Set-ItemProperty -Path $registryPath -Name $name -Value $command -ErrorAction Stop
         Write-Host "`n[AUTO-RUN] Script scheduled to run once after next restart." -ForegroundColor Green
     } catch {
-        Write-Host "[!] Failed to set Auto-Run." -ForegroundColor Red
+        Write-Host "[!] Failed to set auto-run." -ForegroundColor Red
         Write-Host "    Error: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
+# ============================================================================
+# SOFTWARE DETECTION
+# ============================================================================
+
 function Test-AdobeInstalled {
+    <#
+    .SYNOPSIS
+    Checks if Adobe Acrobat Reader is installed
+    #>
     $paths = @(
         "C:\Program Files\Adobe\Acrobat Reader DC\Reader\AcroRdr.exe",
         "C:\Program Files (x86)\Adobe\Acrobat Reader DC\Reader\AcroRdr.exe",
         "C:\Program Files\Adobe\Acrobat Reader DC\Reader\Acrobat.exe"
     )
-    foreach ($path in $paths) { if (Test-Path $path) { return $true } }
+    foreach ($path in $paths) { 
+        if (Test-Path $path) { return $true } 
+    }
     return $false
 }
 
 function Test-LibreOfficeInstalled {
-    # Check for the actual executable, not just the folder
+    <#
+    .SYNOPSIS
+    Checks if LibreOffice is installed
+    #>
     return (Test-Path "C:\Program Files\LibreOffice\program\soffice.exe")
 }
 
-# ---------------------------------------------------------
-# INSTALL FUNCTIONS
-# ---------------------------------------------------------
+# ============================================================================
+# SOFTWARE INSTALLATION
+# ============================================================================
 
 function Install-Adobe {
+    <#
+    .SYNOPSIS
+    Installs Adobe Acrobat Reader silently
+    .PARAMETER InstallerPath
+    Full path to Adobe installer executable
+    #>
     param([string]$InstallerPath)
 
     if (-not (Test-Path $InstallerPath)) { 
@@ -362,17 +457,17 @@ function Install-Adobe {
 
     Write-Host "`n[INSTALLING] Adobe Acrobat Reader..." -ForegroundColor Cyan
     
-    # Start the installer
+    # Launch installer with silent parameters
     $proc = Start-Process -FilePath $InstallerPath -ArgumentList "/sAll /rs /msi /qn" -PassThru
     Write-Host " [>] Installer launched (PID: $($proc.Id))" -ForegroundColor Gray
     
-    # Wait for parent launcher
+    # Wait for launcher wrapper
     $proc | Wait-Process -Timeout 30 -ErrorAction SilentlyContinue
     
     # Monitor actual MSI installation
     Write-Host " [>] Monitoring installation progress..." -ForegroundColor Gray
     
-    $maxWait = 300  # 5 minutes
+    $maxWait = 300  # 5 minutes timeout
     $elapsed = 0
     $checkInterval = 5
     
@@ -393,10 +488,16 @@ function Install-Adobe {
         $elapsed += $checkInterval
     }
     
-    Write-Host "`n [TIMEOUT] Installation may still be running in backg+ound." -ForegroundColor Yellow
+    Write-Host "`n [TIMEOUT] Installation may still be running in background." -ForegroundColor Yellow
 }
 
 function Install-LibreOffice {
+    <#
+    .SYNOPSIS
+    Installs LibreOffice silently via MSI
+    .PARAMETER InstallerPath
+    Full path to LibreOffice MSI installer
+    #>
     param([string]$InstallerPath)
 
     if (-not (Test-Path $InstallerPath)) { 
@@ -418,17 +519,23 @@ function Install-LibreOffice {
 }
 
 function Install-BothApps {
+    <#
+    .SYNOPSIS
+    Installs both Adobe and LibreOffice sequentially
+    .DESCRIPTION
+    Waits for Adobe MSI to complete before starting LibreOffice to avoid conflicts
+    #>
     param([string]$AdobePath, [string]$LibrePath)
     
     Write-Host "`n[STEP 1] Installing Adobe Acrobat..." -ForegroundColor Cyan
-    # Start Adobe and WAIT for the .exe wrapper to finish extraction
+    
+    # Start Adobe and wait for extraction wrapper
     $adobeProc = Start-Process -FilePath $AdobePath -ArgumentList "/sAll /rs /msi /qn /norestart" -PassThru -Wait
     
-    Write-Host " [>] Adobe wrapper finished. Waiting for background MSI to clear..." -ForegroundColor Gray
-    # Give the background MSI 15 seconds to "claim" the process lock
+    Write-Host " [>] Adobe wrapper finished. Waiting for background MSI..." -ForegroundColor Gray
     Start-Sleep -Seconds 15 
     
-    # Wait for the system to be idle before starting LibreOffice
+    # Wait for MSI installer to finish
     while (Get-Process msiexec -ErrorAction SilentlyContinue) {
         Write-Host "." -NoNewline -ForegroundColor Gray
         Start-Sleep -Seconds 5
@@ -440,19 +547,25 @@ function Install-BothApps {
         Write-Host " [SUCCESS] All installations finished." -ForegroundColor Green
     }
 }
+
+# ============================================================================
+# INSTALLATION MENU
+# ============================================================================
+
 function Show-InstallMenu {
-    # 1. Get the absolute directory of the script file
+    <#
+    .SYNOPSIS
+    Displays software installation options
+    #>
+    # Define installer paths
     $absolutePath = "C:\setup\installation"
-    
-    # 2. Filenames
     $adobeInstaller = "AcroRdrDCx642500121111_MUI.exe"
     $libreInstaller = "LibreOffice_25.8.4_Win_x86-64.msi"
     
-    # 3. Combine them
     $adobePath = Join-Path $absolutePath $adobeInstaller
     $librePath = Join-Path $absolutePath $libreInstaller
 
-    # Check if the file actually exists before showing the menu
+    # Validate installer availability
     if (-not (Test-Path $adobePath)) {
         Write-Host "[WARNING] Adobe installer not found at $adobePath" -ForegroundColor Yellow
     }
@@ -463,7 +576,7 @@ function Show-InstallMenu {
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "`n1. Install Adobe Acrobat Reader" -ForegroundColor White
     Write-Host "2. Install LibreOffice" -ForegroundColor White
-    Write-Host "3. Install BOTH (Parallel Installation)" -ForegroundColor White
+    Write-Host "3. Install BOTH (Sequential Installation)" -ForegroundColor White
     Write-Host "4. Return to Main Menu" -ForegroundColor Gray
     Write-Host "`n========================================" -ForegroundColor Cyan
     
@@ -486,10 +599,19 @@ function Show-InstallMenu {
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
 }
 
+# ============================================================================
+# UNINSTALL WORKFLOW
+# ============================================================================
+
 function Start-UninstallProcess {
+    <#
+    .SYNOPSIS
+    Initiates the application uninstall workflow
+    #>
     $configPath = Join-Path $PSScriptRoot "apps_to_remove.txt"
     $preSelected = @()
 
+    # Load template if available
     if (Test-Path $configPath) {
         $preSelected = Get-Content $configPath
     }
@@ -498,23 +620,23 @@ function Start-UninstallProcess {
     $guiResult = Show-UninstallGUI -AppList $allApps -PreSelectedNames $preSelected
 
     if ($guiResult) {
-        # Handle Auto-Run
+        # Configure auto-run if requested
         if ($guiResult.AutoRun) { 
             Set-RunOnce 
         }
 
-        # Handle Widgets
+        # Remove Windows Widgets if requested
         if ($guiResult.RemoveWidgets) { 
             Disable-WindowsWidgets 
         }
         
-        # Save Template
+        # Save selection template
         if ($guiResult.SaveRequested -and $guiResult.AppsToUninst) {
             $guiResult.AppsToUninst.DisplayName | Out-File $configPath -Force
             Write-Host "`n[CONFIG] Template saved to: $configPath" -ForegroundColor Gray
         }
 
-        # Run Uninstalls
+        # Execute uninstalls
         if ($guiResult.AppsToUninst) {
             Write-Host "`n========================================" -ForegroundColor Cyan
             Write-Host "Starting uninstallation process..." -ForegroundColor White
@@ -534,7 +656,15 @@ function Start-UninstallProcess {
     }
 }
 
+# ============================================================================
+# FULL WORKFLOW (UNINSTALL → RESTART → INSTALL)
+# ============================================================================
+
 function Start-FullWorkflow {
+    <#
+    .SYNOPSIS
+    Executes complete workflow: uninstall bloatware, restart, then install software
+    #>
     Clear-Host
     Write-Host "`n========================================" -ForegroundColor Magenta
     Write-Host "    FULL WORKFLOW MODE" -ForegroundColor White
@@ -545,11 +675,11 @@ function Start-FullWorkflow {
     Write-Host "3. Automatically install software after restart" -ForegroundColor White
     Write-Host "`n========================================" -ForegroundColor Magenta
     
-    # First, select which software to install after restart
+    # Select post-restart software installation
     Write-Host "`nWhat software should be installed AFTER restart?" -ForegroundColor Cyan
     Write-Host "1. Adobe Acrobat Reader only" -ForegroundColor White
     Write-Host "2. LibreOffice only" -ForegroundColor White
-    Write-Host "3. Both (Parallel installation)" -ForegroundColor White
+    Write-Host "3. Both (Sequential installation)" -ForegroundColor White
     Write-Host "4. Cancel workflow" -ForegroundColor Gray
     
     $installChoice = Read-Host "`nSelect option [1-4]"
@@ -566,10 +696,10 @@ function Start-FullWorkflow {
         return
     }
     
-    # Save the workflow state
+    # Save workflow state for post-restart continuation
     Set-WorkflowState -Stage "POST_UNINSTALL" -InstallChoice $installChoice
     
-    # Run the uninstall process
+    # Execute uninstall phase
     Write-Host "`n========================================" -ForegroundColor Magenta
     Write-Host "Starting uninstall process..." -ForegroundColor White
     Write-Host "========================================" -ForegroundColor Magenta
@@ -598,12 +728,12 @@ function Start-FullWorkflow {
         Write-Host "`n[CONFIG] Template saved." -ForegroundColor Gray
     }
 
-    # Handle Widgets removal
+    # Remove Windows Widgets if requested
     if ($guiResult.RemoveWidgets) { 
         Disable-WindowsWidgets 
     }
 
-    # Run uninstalls
+    # Execute uninstalls
     if ($guiResult.AppsToUninst) {
         Write-Host "`n========================================" -ForegroundColor Cyan
         Write-Host "Starting uninstallation process..." -ForegroundColor White
@@ -618,10 +748,10 @@ function Start-FullWorkflow {
         Write-Host "========================================" -ForegroundColor Cyan
     }
     
-    # Configure auto-run for post-restart installation
+    # Configure post-restart auto-run
     Set-WorkflowAutoRun
     
-    # Confirm restart
+    # Confirm and initiate restart
     Write-Host "`n========================================" -ForegroundColor Magenta
     Write-Host "READY TO RESTART" -ForegroundColor Yellow
     Write-Host "========================================" -ForegroundColor Magenta
@@ -634,15 +764,18 @@ function Start-FullWorkflow {
     Write-Host "`nRestarting in 5 seconds..." -ForegroundColor Red
     Start-Sleep -Seconds 5
     
-    # Trigger restart
     Restart-Computer -Force
 }
 
-# ---------------------------------------------------------
+# ============================================================================
 # MAIN MENU
-# ---------------------------------------------------------
+# ============================================================================
 
 function Show-MainMenu {
+    <#
+    .SYNOPSIS
+    Displays primary navigation menu
+    #>
     while ($true) {
         Clear-Host
         Write-Host "`n========================================" -ForegroundColor Cyan
@@ -672,20 +805,21 @@ function Show-MainMenu {
     }
 }
 
-# ---------------------------------------------------------
+# ============================================================================
 # SCRIPT ENTRY POINT
-# ---------------------------------------------------------
+# ============================================================================
 
+# Ensure administrative privileges
 Test-Admin
 
-# Check if we're continuing a workflow after restart
+# Check for workflow continuation after restart
 $workflowState = Get-WorkflowState
 
 if ($workflowState -and $workflowState.Stage -eq "POST_UNINSTALL") {
-
+    # Resume workflow: install software
     $absolutePath = "C:\setup\installation"
     
-    # 2. Change directory so any relative logs/files work correctly
+    # Set working directory for installer access
     if (Test-Path $absolutePath) {
         Set-Location -Path $absolutePath
         Write-Host "[WORKFLOW] Working directory set to: $absolutePath" -ForegroundColor Gray
@@ -697,14 +831,14 @@ if ($workflowState -and $workflowState.Stage -eq "POST_UNINSTALL") {
     Write-Host "`nResuming installation phase..." -ForegroundColor Cyan
     Start-Sleep -Seconds 3
     
-    # 3. Filenames
+    # Define installer paths
     $adobeInstaller = "AcroRdrDCx642500121111_MUI.exe"
     $libreInstaller = "LibreOffice_25.8.4_Win_x86-64.msi"
     
-    # 4. Use the absolute variable instead of $PSScriptRoot
     $adobePath = Join-Path $absolutePath $adobeInstaller
     $librePath = Join-Path $absolutePath $libreInstaller
     
+    # Execute installation based on saved choice
     switch ($workflowState.InstallChoice) {
         "1" { 
             Write-Host "`n[WORKFLOW] Installing Adobe Acrobat Reader..." -ForegroundColor Cyan
@@ -720,7 +854,7 @@ if ($workflowState -and $workflowState.Stage -eq "POST_UNINSTALL") {
         }
     }
     
-    # Clear the workflow state
+    # Clean up workflow state
     Clear-WorkflowState
     
     Write-Host "`n========================================" -ForegroundColor Magenta
@@ -731,5 +865,5 @@ if ($workflowState -and $workflowState.Stage -eq "POST_UNINSTALL") {
     Exit
 }
 
-# Normal operation - show main menu
+# Normal operation: display main menu
 Show-MainMenu
