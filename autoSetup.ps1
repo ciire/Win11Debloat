@@ -193,7 +193,6 @@ function Show-UninstallGUI {
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         
         <TextBlock Text="Select Applications to Remove" Foreground="#ff00ff" FontSize="18" Margin="0,0,0,10" FontWeight="Bold"/>
@@ -217,11 +216,8 @@ function Show-UninstallGUI {
 
         <CheckBox x:Name="WidgetToggle" Grid.Row="4" Content="Turn off Windows Widgets" 
                   Foreground="#ff00ff" Margin="0,10,0,0" IsChecked="False" VerticalAlignment="Center"/>
-
-        <CheckBox x:Name="AutoRunToggle" Grid.Row="5" Content="Run this script automatically after restart" 
-                  Foreground="#ff00ff" Margin="0,10,0,0" IsChecked="False" VerticalAlignment="Center"/>
         
-        <Button x:Name="BtnStart" Grid.Row="6" Content="UNINSTALL SELECTED" Height="35" Margin="0,15,0,0" 
+        <Button x:Name="BtnStart" Grid.Row="5" Content="UNINSTALL SELECTED" Height="35" Margin="0,15,0,0" 
                 Background="#ff3333" Foreground="White" FontWeight="Bold"/>
     </Grid>
 </Window>
@@ -281,7 +277,6 @@ function Show-UninstallGUI {
             AppsToUninst  = $wrappedList | Where-Object { $_.IsChecked } | Select-Object -ExpandProperty Original
             SaveRequested = ($window.FindName("SaveToggle")).IsChecked
             RemoveWidgets = ($window.FindName("WidgetToggle")).IsChecked
-            AutoRun       = ($window.FindName("AutoRunToggle")).IsChecked
         }
     }
 }
@@ -395,32 +390,6 @@ function Invoke-AppRemoval {
     catch { 
         Write-Host " [!] Critical Error: Could not launch $name uninstaller." -ForegroundColor Red 
         Write-Host " [!] Details: $($_.Exception.Message)" -ForegroundColor Yellow
-    }
-}
-
-# ============================================================================
-# AUTO-RUN CONFIGURATION
-# ============================================================================
-
-function Set-RunOnce {
-    <#
-    .SYNOPSIS
-    Schedules script to run once after next restart
-    #>
-    $scriptPath = $PSCommandPath
-    $tempPath = Join-Path $env:TEMP "software_manager_log.txt"
-    Add-Content -Path $tempPath -Value "Script ran at $(Get-Date)"
-    
-    $registryPath = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce"
-    $name = "SoftwareManagerAutoRun"
-    
-    $command = "powershell.exe -NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`""
-    try {
-        Set-ItemProperty -Path $registryPath -Name $name -Value $command -ErrorAction Stop
-        Write-Host "`n[AUTO-RUN] Script scheduled to run once after next restart." -ForegroundColor Green
-    } catch {
-        Write-Host "[!] Failed to set auto-run." -ForegroundColor Red
-        Write-Host "    Error: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
@@ -635,11 +604,6 @@ function Start-UninstallProcess {
     $guiResult = Show-UninstallGUI -AppList $allApps -PreSelectedNames $preSelected
 
     if ($guiResult) {
-        # Configure auto-run if requested
-        if ($guiResult.AutoRun) { 
-            Set-RunOnce 
-        }
-
         # Remove Windows Widgets if requested
         if ($guiResult.RemoveWidgets) { 
             Disable-WindowsWidgets 
@@ -679,6 +643,8 @@ function Start-FullWorkflow {
     <#
     .SYNOPSIS
     Executes complete workflow: uninstall bloatware, restart, then install software
+    .DESCRIPTION
+    Auto-restart is MANDATORY in this workflow - it always configures auto-run after restart
     #>
     Clear-Host
     Write-Host "`n========================================" -ForegroundColor Magenta
@@ -694,7 +660,7 @@ function Start-FullWorkflow {
     Write-Host "`nWhat software should be installed AFTER restart?" -ForegroundColor Cyan
     Write-Host "1. Adobe Acrobat Reader only" -ForegroundColor White
     Write-Host "2. LibreOffice only" -ForegroundColor White
-    Write-Host "3. Both (Sequential installation)" -ForegroundColor White
+    Write-Host "3. Both" -ForegroundColor White
     Write-Host "4. Cancel workflow" -ForegroundColor Gray
     
     $installChoice = Read-Host "`nSelect option [1-4]"
@@ -763,7 +729,8 @@ function Start-FullWorkflow {
         Write-Host "========================================" -ForegroundColor Cyan
     }
     
-    # Configure post-restart auto-run
+    # MANDATORY: Configure post-restart auto-run (no user choice)
+    Write-Host "`n[WORKFLOW] Configuring automatic restart and installation..." -ForegroundColor Cyan
     Set-WorkflowAutoRun
     
     # Confirm and initiate restart
@@ -872,9 +839,9 @@ if ($workflowState -and $workflowState.Stage -eq "POST_UNINSTALL") {
     # Clean up workflow state
     Clear-WorkflowState
     
-    Write-Host "`n========================================" -ForegroundColor Magenta
-    Write-Host "WORKFLOW COMPLETED SUCCESSFULLY!" -ForegroundColor Green
-    Write-Host "========================================" -ForegroundColor Magenta
+    Write-Host "`n========================================" -ForegroundColor White
+    Write-Host "WORKFLOW COMPLETED SUCCESSFULLY!" -ForegroundColor White
+    Write-Host "========================================" -ForegroundColor White
     Write-Host "`nAll tasks finished. Press any key to exit..." -ForegroundColor White
     $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
     Exit
