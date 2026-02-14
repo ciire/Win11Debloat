@@ -19,7 +19,7 @@ Add-Type -AssemblyName WindowsBase
 function Get-WorkflowState {
     <#
     .SYNOPSIS
-    Retrieves the current workflow state from temp storage
+    Retrieves the current workflo+w state from temp storage
     #>
     $statePath = Join-Path $env:TEMP "software_manager_workflow.json"
     if (Test-Path $statePath) {
@@ -196,10 +196,10 @@ function Show-UninstallGUI {
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
         
-        <TextBlock Text="Select Applications to Remove" Foreground="#00fbff" FontSize="18" Margin="0,0,0,10" FontWeight="Bold"/>
+        <TextBlock Text="Select Applications to Remove" Foreground="#ff00ff" FontSize="18" Margin="0,0,0,10" FontWeight="Bold"/>
         
-        <CheckBox x:Name="UseTemplate" Grid.Row="1" Content="Use saved template (apps_to_remove.txt)" 
-                  Foreground="#00fbff" Margin="0,0,0,10" IsChecked="False" VerticalAlignment="Center"/>
+        <CheckBox x:Name="UseTemplate" Grid.Row="1" Content="Select apps from apps_to_remove text file" 
+                  Foreground="#ff00ff" Margin="0,0,0,10" IsChecked="False" VerticalAlignment="Center"/>
 
         <ListBox x:Name="AppListBox" Grid.Row="2" Background="#1e1e1e" Foreground="White" BorderThickness="0">
             <ListBox.ItemTemplate>
@@ -212,14 +212,14 @@ function Show-UninstallGUI {
             </ListBox.ItemTemplate>
         </ListBox>
 
-        <CheckBox x:Name="SaveToggle" Grid.Row="3" Content="Update apps_to_remove.txt with current selection" 
-                  Foreground="Gray" Margin="0,15,0,0" IsChecked="True" VerticalAlignment="Center"/>
+        <CheckBox x:Name="SaveToggle" Grid.Row="3" Content="Save app selection to apps_to_remove text file" 
+                  Foreground="#ff00ff" Margin="0,15,0,0" IsChecked="True" VerticalAlignment="Center"/>
 
-        <CheckBox x:Name="WidgetToggle" Grid.Row="4" Content="Completely Remove Windows Widgets" 
+        <CheckBox x:Name="WidgetToggle" Grid.Row="4" Content="Turn off Windows Widgets" 
                   Foreground="#ff00ff" Margin="0,10,0,0" IsChecked="False" VerticalAlignment="Center"/>
 
         <CheckBox x:Name="AutoRunToggle" Grid.Row="5" Content="Run this script automatically after restart" 
-                  Foreground="Yellow" Margin="0,10,0,0" IsChecked="False" VerticalAlignment="Center"/>
+                  Foreground="#ff00ff" Margin="0,10,0,0" IsChecked="False" VerticalAlignment="Center"/>
         
         <Button x:Name="BtnStart" Grid.Row="6" Content="UNINSTALL SELECTED" Height="35" Margin="0,15,0,0" 
                 Background="#ff3333" Foreground="White" FontWeight="Bold"/>
@@ -259,7 +259,22 @@ function Show-UninstallGUI {
         $listBox.Items.Refresh()
     })
 
-    ($window.FindName("BtnStart")).Add_Click({ $window.DialogResult = $true; $window.Close() })
+    ($window.FindName("BtnStart")).Add_Click({
+        # Show friendly informational message about the process
+        $result = [System.Windows.MessageBox]::Show(
+            "Most apps will be removed silently in the background.`n`n" +
+            "If an app can't be uninstalled automatically, its uninstaller window will open for you to complete manually.`n`n" +
+            "Ready to begin?",
+            "Starting Uninstallation",
+            [System.Windows.MessageBoxButton]::OKCancel,
+            [System.Windows.MessageBoxImage]::Information
+        )
+        
+        if ($result -eq [System.Windows.MessageBoxResult]::OK) {
+            $window.DialogResult = $true
+            $window.Close()
+        }
+    })
     
     if ($window.ShowDialog()) { 
         return [PSCustomObject]@{
@@ -576,7 +591,7 @@ function Show-InstallMenu {
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "`n1. Install Adobe Acrobat Reader" -ForegroundColor White
     Write-Host "2. Install LibreOffice" -ForegroundColor White
-    Write-Host "3. Install BOTH (Sequential Installation)" -ForegroundColor White
+    Write-Host "3. Install BOTH" -ForegroundColor White
     Write-Host "4. Return to Main Menu" -ForegroundColor Gray
     Write-Host "`n========================================" -ForegroundColor Cyan
     
@@ -670,9 +685,9 @@ function Start-FullWorkflow {
     Write-Host "    FULL WORKFLOW MODE" -ForegroundColor White
     Write-Host "========================================" -ForegroundColor Magenta
     Write-Host "`nThis will:" -ForegroundColor Yellow
-    Write-Host "1. Uninstall selected bloatware" -ForegroundColor White
-    Write-Host "2. Restart your computer" -ForegroundColor White
-    Write-Host "3. Automatically install software after restart" -ForegroundColor White
+    Write-Host "Step 1. Uninstall selected bloatware" -ForegroundColor White
+    Write-Host "Step 2. Restart your computer" -ForegroundColor White
+    Write-Host "Step 3. Automatically install software after restart" -ForegroundColor White
     Write-Host "`n========================================" -ForegroundColor Magenta
     
     # Select post-restart software installation
@@ -781,9 +796,9 @@ function Show-MainMenu {
         Write-Host "`n========================================" -ForegroundColor Cyan
         Write-Host "    SOFTWARE MANAGEMENT TOOL" -ForegroundColor White
         Write-Host "========================================" -ForegroundColor Cyan
-        Write-Host "`n1. UNINSTALL Bloatware/Applications" -ForegroundColor Red
-        Write-Host "2. INSTALL Software (Adobe, LibreOffice)" -ForegroundColor Green
-        Write-Host "3. FULL WORKFLOW (Uninstall → Restart → Install)" -ForegroundColor Magenta
+        Write-Host "`n1. UNINSTALL Bloatware/Applications" -ForegroundColor Gray
+        Write-Host "2. INSTALL Software (Adobe, LibreOffice)" -ForegroundColor Gray
+        Write-Host "3. FULL WORKFLOW (Uninstall -> Restart -> Install)" -ForegroundColor Gray
         Write-Host "4. Exit" -ForegroundColor Gray
         Write-Host "`n========================================" -ForegroundColor Cyan
         
